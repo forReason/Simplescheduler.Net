@@ -1,4 +1,6 @@
 ﻿using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using SimpleScheduler.Net.EventTypes;
 
 namespace SimpleScheduler.Net;
@@ -8,6 +10,10 @@ namespace SimpleScheduler.Net;
 /// </summary>
 public class Scheduler
 {
+    [JsonIgnore]
+    public string? SavePath { get; set; }
+
+    public bool AutoSave { get; set; } = true;
     /// <summary>
     /// holds all one time events. Managed automatically
     /// </summary>
@@ -39,6 +45,7 @@ public class Scheduler
             tasks.Add(ProcessEvents(CronJobs,_CronSemaphore, isRepeating: true));
             tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore ,isRepeating: true));
             await Task.WhenAll(tasks);
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
             await Task.Delay(1000);
         }
     }
@@ -52,6 +59,7 @@ public class Scheduler
         try
         {
             OneTimeEvents.Add(newEvent.StartTime, newEvent);
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
         }
         finally
         {
@@ -69,6 +77,7 @@ public class Scheduler
         try
         {
             CronJobs.Add(newEvent.StartTime, newEvent);
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
         }
         finally
         {
@@ -86,6 +95,7 @@ public class Scheduler
         try
         {
             WeeklySchedule.Add(newEvent.StartTime, newEvent);
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
         }
         finally
         {
@@ -175,5 +185,73 @@ public class Scheduler
         }
 
         return events.OrderBy(e => e.StartTime).ToList();
+    }
+    /// <summary>
+    /// Saves the current state of the scheduler to a file using atomic saving.
+    /// </summary>
+    /// <param name="savePath">The file path where the scheduler data should be saved.</param>
+    public async Task SaveAsync(string? savePath = null)
+    {
+        if (!string.IsNullOrEmpty(savePath))
+            SavePath = savePath;
+        if (string.IsNullOrEmpty(SavePath))
+            throw new ArgumentException("you need to define the savePath first!");
+        if (!SavePath.EndsWith(".schedule"))
+            SavePath += ".schedule";
+
+        // Ensure the directory exists
+        string directoryPath = Path.GetDirectoryName(SavePath)
+                               ?? throw new InvalidOperationException("Failed to determine directory path.");
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        string tempFilePath = SavePath + ".tmp";
+
+        using (var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            await JsonSerializer.SerializeAsync(fileStream, this, options);
+        }
+
+        File.Replace(tempFilePath, SavePath, null);
+    }
+
+    /// <summary>
+    /// Loads the state of the scheduler from a file.
+    /// </summary>
+    /// <param name="filePath">The file path from where the scheduler data should be loaded.</param>
+    public async Task LoadAsync(string? filePath = null )
+    {
+        if (!string.IsNullOrEmpty(filePath))
+            SavePath = filePath;
+        if (string.IsNullOrEmpty(SavePath))
+            throw new ArgumentException("you need to define the savePath first!");
+        if (!SavePath.EndsWith(".schedule"))
+            SavePath += ".schedule";
+        if (!File.Exists(SavePath))
+            throw new FileNotFoundException("Scheduler state file not found.", SavePath);
+
+        var options = new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        using (var fileStream = new FileStream(SavePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var state = await JsonSerializer.DeserializeAsync<dynamic>(fileStream, options);
+            if (state != null)
+            {
+                this.OneTimeEvents = state.OneTimeEvents ?? new SortedList<DateTime, OneTimeEvent>();
+                this.CronJobs = state.CronJobs ?? new SortedList<DateTime, RepeatingEvent>();
+                this.WeeklySchedule = state.WeeklySchedule ?? new SortedList<DateTime, WeeklyEvent>();
+            }
+        }
     }
 }
