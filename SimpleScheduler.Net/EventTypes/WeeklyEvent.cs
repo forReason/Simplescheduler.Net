@@ -2,12 +2,12 @@
 
 public class WeeklyEvent : EventBase
 {
-    public WeeklyEvent(DateTime startTime, Action action, DayOfWeek[] days,string? title = null ,DateTime? endTime = null)
+    public WeeklyEvent(DateTime startTime, string taskData, DayOfWeek[] days,string? title = null ,DateTime? endTime = null)
     {
         if (!days.Any()) throw new ArgumentException("Days cannot be empty!");
         StartTime = startTime;
         Interval = new HashSet<DayOfWeek>(days);
-        TaskToExecute = action;
+        TaskData = taskData;
         EndTime = endTime;
         Title = title;
     }
@@ -26,7 +26,7 @@ public class WeeklyEvent : EventBase
     /// Executes the task if applicable.
     /// </summary>
     /// <returns>Returns true if the task is complete and can be removed.</returns>
-    public override async Task<bool> ExecuteEvaluate()
+    public override async Task<bool> ExecuteEvaluate(Action<string> action)
     {
         DateTime now = DateTime.Now;
         if (EndTime.HasValue && now > EndTime) return true;
@@ -37,7 +37,7 @@ public class WeeklyEvent : EventBase
             if (Executed.HasValue && Executed.Value >= StartTime) return false;
 
             // Execute the task
-            Task.Run(() => TaskToExecute?.Invoke());
+            Task.Run(() => action?.Invoke(TaskData));
             Executed = now;
 
             // Adjust StartTime to the next execution time

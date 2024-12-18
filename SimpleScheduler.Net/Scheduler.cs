@@ -32,12 +32,15 @@ public class Scheduler
     public SortedList<DateTime, WeeklyEvent> WeeklySchedule { get; set; } = new SortedList<DateTime, WeeklyEvent>();
     private SemaphoreSlim _WeeklySemaphore = new SemaphoreSlim(1);
 
+    private Action<string> Processor { get; set; }
     /// <summary>
     /// runs the scheduler infinitely, processing all tasks
     /// </summary>
-    public async Task Run()
+    /// <param name="processor">function which takes a string parameter (presumably json) to process</param>
+    public async Task Run(Action<string> processor)
     {
         List<Task> tasks = new List<Task>();
+        Processor = processor;
         while (true)
         {
             tasks.Clear();
@@ -114,7 +117,7 @@ public class Scheduler
                 bool remove = false;
                 try
                 {
-                    remove = await firstEvent.ExecuteEvaluate(); // Ensure async task completion
+                    remove = await firstEvent.ExecuteEvaluate(Processor); // Ensure async task completion
                 }
                 catch (Exception e)
                 {

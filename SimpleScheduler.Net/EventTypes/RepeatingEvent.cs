@@ -2,11 +2,11 @@
 
 public class RepeatingEvent : EventBase
 {
-    public RepeatingEvent(DateTime startTime, Action action, TimeSpan interval,string? title = null ,DateTime? endTime = null)
+    public RepeatingEvent(DateTime startTime, string taskData, TimeSpan interval,string? title = null ,DateTime? endTime = null)
     {
         StartTime = startTime;
         Interval = interval;
-        TaskToExecute = action;
+        TaskData = taskData;
         EndTime = endTime;
         Title = title;
     }
@@ -26,7 +26,7 @@ public class RepeatingEvent : EventBase
     /// Executes the task if applicable. <br/>
     /// </summary>
     /// <returns>Returns true, if the task is complete and can be removed</returns>
-    public override async Task<bool> ExecuteEvaluate()
+    public override async Task<bool> ExecuteEvaluate(Action<string> action)
     {
         DateTime now = DateTime.Now;
         if (EndTime.HasValue && now > EndTime) return true;
@@ -36,7 +36,7 @@ public class RepeatingEvent : EventBase
         {
             Task.Run(async () =>
             {
-                TaskToExecute?.Invoke();
+                action?.Invoke(TaskData);
                 Executed = now;
             });
             StartTime += Interval;

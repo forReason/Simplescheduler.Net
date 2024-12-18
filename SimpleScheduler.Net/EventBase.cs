@@ -14,7 +14,7 @@ public abstract class EventBase
     /// <summary>
     /// the action to invoke
     /// </summary>
-    public Action TaskToExecute { get; set; }
+    public string TaskData { get; set; }
     /// <summary>
     /// specifies the last execution time of the task
     /// </summary>
@@ -26,7 +26,7 @@ public abstract class EventBase
     /// </summary>
     public string? Title = null;
     internal readonly object _executionLock = new();
-    public abstract Task<bool> ExecuteEvaluate();
+    public abstract Task<bool> ExecuteEvaluate(Action<string> action);
     public override string ToString()
     {
         return $"{StartTime.ToString("yy-MMM-dd yyyy HH:mm:ss")} - {Title ?? "Unnamed"}";

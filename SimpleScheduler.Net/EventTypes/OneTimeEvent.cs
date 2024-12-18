@@ -2,10 +2,10 @@
 
 public class OneTimeEvent : EventBase
 {
-    public OneTimeEvent(DateTime startTime, Action action, string? title = null)
+    public OneTimeEvent(DateTime startTime, string taskData, string? title = null)
     {
         StartTime = startTime;
-        TaskToExecute = action;
+        TaskData = taskData;
         Title = title;
     }
     /// <summary>
@@ -13,21 +13,32 @@ public class OneTimeEvent : EventBase
     /// Executes the task if applicable. <br/>
     /// </summary>
     /// <returns>Returns true, if the task is complete and can be removed</returns>
-    public override async Task<bool> ExecuteEvaluate()
+    public override async Task<bool> ExecuteEvaluate(Action<string> action)
     {
         DateTime now = DateTime.Now;
+
+        // Ensure the task is not executed before the start time
         if (now < StartTime) return false;
 
         lock (_executionLock)
         {
-            if (Executed.HasValue) return true;
-            Task.Run(async () =>
+            if (!Executed.HasValue)
             {
-                TaskToExecute?.Invoke();
-                Executed = now;
-            });
+                Executed = now; // Mark as executed inside the lock
+            }
+            else
+            {
+                return true; // Avoid race conditions for double execution
+            }
         }
+
+        // Execute the action asynchronously outside the lock
+        await Task.Run(() =>
+        {
+            action?.Invoke(TaskData);
+        });
 
         return true;
     }
+
 }
