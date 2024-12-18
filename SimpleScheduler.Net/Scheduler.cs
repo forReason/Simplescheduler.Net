@@ -227,7 +227,7 @@ public class Scheduler
     /// Loads the state of the scheduler from a file.
     /// </summary>
     /// <param name="filePath">The file path from where the scheduler data should be loaded.</param>
-    public async Task LoadAsync(string? filePath = null )
+    public async Task LoadAsync(string? filePath = null, bool throwOnNotExist = true )
     {
         if (!string.IsNullOrEmpty(filePath))
             SavePath = filePath;
@@ -235,7 +235,7 @@ public class Scheduler
             throw new ArgumentException("you need to define the savePath first!");
         if (!SavePath.EndsWith(".schedule"))
             SavePath += ".schedule";
-        if (!File.Exists(SavePath))
+        if (throwOnNotExist && !File.Exists(SavePath))
             throw new FileNotFoundException("Scheduler state file not found.", SavePath);
 
         var options = new JsonSerializerOptions
