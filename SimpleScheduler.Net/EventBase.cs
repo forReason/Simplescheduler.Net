@@ -24,7 +24,7 @@ public abstract class EventBase
     /// <summary>
     /// a title for the task to better determine it
     /// </summary>
-    public string? Title = null;
+    public string? Title { get; set; } = null;
     internal readonly object _executionLock = new();
     public abstract Task<bool> ExecuteEvaluate(Action<string> action);
     public override string ToString()

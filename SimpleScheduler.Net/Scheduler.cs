@@ -2,6 +2,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using SimpleScheduler.Net.EventTypes;
+using SimpleScheduler.Net.util.json;
 
 namespace SimpleScheduler.Net;
 
@@ -223,38 +224,63 @@ public class Scheduler
             await JsonSerializer.SerializeAsync(fileStream, this, options);
         }
 
-        File.Replace(tempFilePath, SavePath, null);
+        File.Move(tempFilePath, SavePath, true);
     }
 
     /// <summary>
     /// Loads the state of the scheduler from a file.
     /// </summary>
     /// <param name="filePath">The file path from where the scheduler data should be loaded.</param>
-    public async Task LoadAsync(string? filePath = null, bool throwOnNotExist = true )
+    public async Task LoadAsync(string? filePath = null, bool throwOnNotExist = true)
+{
+    if (!string.IsNullOrEmpty(filePath))
+        SavePath = filePath;
+    if (string.IsNullOrEmpty(SavePath))
+        throw new ArgumentException("You need to define the SavePath first!");
+    if (!SavePath.EndsWith(".schedule"))
+        SavePath += ".schedule";
+    if (throwOnNotExist && !File.Exists(SavePath))
+        throw new FileNotFoundException("Scheduler state file not found.", SavePath);
+    if (!File.Exists(SavePath))
     {
-        if (!string.IsNullOrEmpty(filePath))
-            SavePath = filePath;
-        if (string.IsNullOrEmpty(SavePath))
-            throw new ArgumentException("you need to define the savePath first!");
-        if (!SavePath.EndsWith(".schedule"))
-            SavePath += ".schedule";
-        if (throwOnNotExist && !File.Exists(SavePath))
-            throw new FileNotFoundException("Scheduler state file not found.", SavePath);
+        return;
+    }
 
-        var options = new JsonSerializerOptions
-        {
-            Converters = { new JsonStringEnumConverter() }
-        };
+    var options = new JsonSerializerOptions
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
 
-        using (var fileStream = new FileStream(SavePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+    using (var fileStream = new FileStream(SavePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+    {
+        if (fileStream is null || fileStream.Length == 0) return;
+
+        try
         {
-            var state = await JsonSerializer.DeserializeAsync<dynamic>(fileStream, options);
-            if (state != null)
+            var state = await JsonSerializer.DeserializeAsync<JsonElement>(fileStream, options);
+            if (state.ValueKind == JsonValueKind.Object)
             {
-                this.OneTimeEvents = state.OneTimeEvents ?? new SortedList<DateTime, OneTimeEvent>();
-                this.CronJobs = state.CronJobs ?? new SortedList<DateTime, RepeatingEvent>();
-                this.WeeklySchedule = state.WeeklySchedule ?? new SortedList<DateTime, WeeklyEvent>();
+                this.OneTimeEvents = state.TryGetProperty("OneTimeEvents", out var oneTimeEvents) &&
+                                     oneTimeEvents.ValueKind != JsonValueKind.Null
+                    ? JsonSerializer.Deserialize<SortedList<DateTime, OneTimeEvent>>(oneTimeEvents.GetRawText(), options)
+                    : new SortedList<DateTime, OneTimeEvent>();
+
+                this.CronJobs = state.TryGetProperty("CronJobs", out var cronJobs) &&
+                                cronJobs.ValueKind != JsonValueKind.Null
+                    ? JsonSerializer.Deserialize<SortedList<DateTime, RepeatingEvent>>(cronJobs.GetRawText(), options)
+                    : new SortedList<DateTime, RepeatingEvent>();
+
+                this.WeeklySchedule = state.TryGetProperty("WeeklySchedule", out var weeklySchedule) &&
+                                      weeklySchedule.ValueKind != JsonValueKind.Null
+                    ? JsonSerializer.Deserialize<SortedList<DateTime, WeeklyEvent>>(weeklySchedule.GetRawText(), options)
+                    : new SortedList<DateTime, WeeklyEvent>();
             }
         }
+        catch (JsonException ex)
+        {
+            throw new InvalidOperationException("Failed to deserialize scheduler state.", ex);
+        }
     }
+}
+
 }
