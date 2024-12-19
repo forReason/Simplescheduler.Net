@@ -2,14 +2,15 @@
 
 public class WeeklyEvent : EventBase
 {
-    public WeeklyEvent(DateTime startTime, string taskData, DayOfWeek[] days,string? title = null ,DateTime? endTime = null)
+    public WeeklyEvent(DateTime startTime, string taskData, HashSet<DayOfWeek> interval,string? title = null ,DateTime? endTime = null, DateTime? executed = null)
     {
-        if (!days.Any()) throw new ArgumentException("Days cannot be empty!");
+        if (!interval.Any()) throw new ArgumentException("Days cannot be empty!");
         StartTime = startTime;
-        Interval = new HashSet<DayOfWeek>(days);
+        Interval = interval;
         TaskData = taskData;
         EndTime = endTime;
         Title = title;
+        Executed = executed;
     }
     /// <summary>
     /// the task will be executed on these days, at time of startTime

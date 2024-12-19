@@ -7,7 +7,7 @@
         <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <NoWarn>$(NoWarn);1591</NoWarn>
-        <Version>1.0.6</Version>
+        <Version>1.0.11</Version>
         <Title>SimpleScheduler.Net</Title>
         <Authors>Julian Bechtold</Authors>
     </PropertyGroup>
