@@ -34,10 +34,11 @@ public class RepeatingEvent : EventBase
 
         lock (_executionLock)
         {
+            if (now < StartTime.AddMinutes(10))
             Task.Run(async () =>
             {
-                action?.Invoke(TaskData);
-                Executed = now;
+                    action?.Invoke(TaskData);
+                    Executed = now;
             });
             StartTime += Interval;
         }
