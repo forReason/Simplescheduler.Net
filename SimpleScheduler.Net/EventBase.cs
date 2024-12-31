@@ -1,4 +1,6 @@
-﻿namespace SimpleScheduler.Net;
+﻿using OllamaClientLibrary.GeneralAi.PromptChain;
+
+namespace SimpleScheduler.Net;
 
 public abstract class EventBase
 {
@@ -14,7 +16,12 @@ public abstract class EventBase
     /// <summary>
     /// the action to invoke
     /// </summary>
-    public string TaskData { get; set; }
+    public string? TaskData { get; set; } = null;
+
+    /// <summary>
+    /// the actionchain to invoke (For LLMs)
+    /// </summary>
+    public PromptChain? TaskChain { get; set; } = null;
     /// <summary>
     /// specifies the last execution time of the task
     /// </summary>
@@ -27,6 +34,7 @@ public abstract class EventBase
     public string? Title { get; set; } = null;
     internal readonly object _executionLock = new();
     public abstract Task<bool> ExecuteEvaluate(Action<string> action);
+    public abstract Task<bool> ExecuteEvaluatePromptChain(Action<PromptChain> action);
     public override string ToString()
     {
         return $"{StartTime.ToString("yy-MMM-dd yyyy HH:mm:ss")} - {Title ?? "Unnamed"}";

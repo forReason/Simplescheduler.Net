@@ -12,4 +12,8 @@
         <Authors>Julian Bechtold</Authors>
     </PropertyGroup>
 
+    <ItemGroup>
+      <ProjectReference Include="..\..\OllamaClientLibrary\OllamaClientLibrary\OllamaClientLibrary.csproj" />
+    </ItemGroup>
+
 </Project>

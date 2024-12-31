@@ -1,4 +1,6 @@
-﻿namespace SimpleScheduler.Net.EventTypes;
+﻿using OllamaClientLibrary.GeneralAi.PromptChain;
+
+namespace SimpleScheduler.Net.EventTypes;
 
 public class WeeklyEvent : EventBase
 {
@@ -12,6 +14,17 @@ public class WeeklyEvent : EventBase
         Title = title;
         Executed = executed;
     }
+    public WeeklyEvent(DateTime startTime, PromptChain taskChain, HashSet<DayOfWeek> interval,string? title = null ,DateTime? endTime = null, DateTime? executed = null)
+    {
+        if (!interval.Any()) throw new ArgumentException("Days cannot be empty!");
+        StartTime = startTime;
+        Interval = interval;
+        TaskChain = taskChain;
+        EndTime = endTime;
+        Title = title;
+        Executed = executed;
+    }
+
     /// <summary>
     /// the task will be executed on these days, at time of startTime
     /// </summary>
@@ -39,6 +52,31 @@ public class WeeklyEvent : EventBase
 
             // Execute the task
             Task.Run(() => action?.Invoke(TaskData));
+            Executed = now;
+
+            // Adjust StartTime to the next execution time
+            AdjustToNextExecution();
+        }
+
+        return false;
+    }
+    /// <summary>
+    /// executes a prompt chain injection
+    /// </summary>
+    /// <param name="action"></param>
+    /// <returns></returns>
+    public override async Task<bool> ExecuteEvaluatePromptChain(Action<PromptChain> action)
+    {
+        DateTime now = DateTime.Now;
+        if (EndTime.HasValue && now > EndTime) return true;
+        if (now < StartTime) return false;
+
+        lock (_executionLock)
+        {
+            if (Executed.HasValue && Executed.Value >= StartTime) return false;
+
+            // Execute the task
+            Task.Run(() => action?.Invoke(TaskChain));
             Executed = now;
 
             // Adjust StartTime to the next execution time
