@@ -1,12 +1,29 @@
-﻿namespace SimpleScheduler.Net.EventTypes;
+﻿using OllamaClientLibrary.GeneralAi.PromptChain;
+
+namespace SimpleScheduler.Net.EventTypes;
 
 public class RepeatingEvent : EventBase
 {
+    /// <summary>
+    /// for json serialization only
+    /// </summary>
+    public RepeatingEvent()
+    {
+        
+    }
     public RepeatingEvent(DateTime startTime, string taskData, TimeSpan interval,string? title = null ,DateTime? endTime = null)
     {
         StartTime = startTime;
         Interval = interval;
         TaskData = taskData;
+        EndTime = endTime;
+        Title = title;
+    }
+    public RepeatingEvent(DateTime startTime, PromptChain taskChain, TimeSpan interval,string? title = null ,DateTime? endTime = null)
+    {
+        StartTime = startTime;
+        Interval = interval;
+        TaskChain = taskChain;
         EndTime = endTime;
         Title = title;
     }
@@ -20,30 +37,33 @@ public class RepeatingEvent : EventBase
     public DateTime? EndTime { get; set; }
 
     public TimeSpan Interval { get; set; }
-
+    
     /// <summary>
-    /// checks if the task should be executed. <br/>
-    /// Executes the task if applicable. <br/>
+    /// Evaluates if the task is ready for execution or should be rescheduled.
     /// </summary>
-    /// <returns>Returns true, if the task is complete and can be removed</returns>
-    public override async Task<bool> ExecuteEvaluate(Action<string> action)
+    /// <returns>(bool remove, bool execute)</returns>
+    public override (bool remove, bool execute) EvaluateSchedule()
     {
         DateTime now = DateTime.Now;
-        if (EndTime.HasValue && now > EndTime) return true;
-        if (now < StartTime) return false;
+        if (EndTime.HasValue && now > EndTime) return (true, false);
+        if (now < StartTime) return (false, false);
+        return (true, true);
+    }
 
-        lock (_executionLock)
+
+    public override void AdjustToNextExecutionTime()
+    {
+        DateTime now = DateTime.Now;
+        DateTime nextStart = StartTime;
+        if (nextStart < now) nextStart = now;
+
+        // Find the next valid day of the week
+        while (nextStart <= now)
         {
-            if (now < StartTime.AddMinutes(10))
-            Task.Run(async () =>
-            {
-                    action?.Invoke(TaskData);
-                    Executed = now;
-            });
-            StartTime += Interval;
+            nextStart += Interval;
         }
 
-        return false;
+        StartTime = new DateTime(nextStart.Year, nextStart.Month, nextStart.Day, StartTime.Hour, StartTime.Minute, StartTime.Second);
     }
 
     public override string ToString()

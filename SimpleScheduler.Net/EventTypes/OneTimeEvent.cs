@@ -5,6 +5,13 @@ namespace SimpleScheduler.Net.EventTypes;
 public class OneTimeEvent : EventBase
 {
     /// <summary>
+    /// for json serialization only
+    /// </summary>
+    public OneTimeEvent()
+    {
+        
+    }
+    /// <summary>
     /// for use with custom task interpreter
     /// </summary>
     /// <param name="startTime">the tiem when the event happens</param>
@@ -29,16 +36,15 @@ public class OneTimeEvent : EventBase
         Title = title;
     }
     /// <summary>
-    /// checks if the task should be executed. <br/>
-    /// Executes the task if applicable. <br/>
+    /// Evaluates if the task is ready for execution or should be rescheduled.
     /// </summary>
-    /// <returns>Returns true, if the task is complete and can be removed</returns>
-    public override async Task<bool> ExecuteEvaluate(Action<string> action)
+    /// <returns>(bool remove, bool execute)</returns>
+    public override (bool remove, bool execute) EvaluateSchedule()
     {
         DateTime now = DateTime.Now;
 
         // Ensure the task is not executed before the start time
-        if (now < StartTime) return false;
+        if (now < StartTime) return (false, false);
 
         lock (_executionLock)
         {
@@ -48,49 +54,16 @@ public class OneTimeEvent : EventBase
             }
             else
             {
-                return true; // Avoid race conditions for double execution
+                return (true, false); // Avoid race conditions for double execution
             }
         }
 
-        // Execute the action asynchronously outside the lock
-        await Task.Run(() =>
-        {
-            action?.Invoke(TaskData);
-        });
-
-        return true;
+        return (true, true);
     }
-    /// <summary>
-    /// checks if the task should be executed. <br/>
-    /// Executes the task if applicable. <br/>
-    /// </summary>
-    /// <returns>Returns true, if the task is complete and can be removed</returns>
-    public override async Task<bool> ExecuteEvaluatePromptChain(Action<PromptChain> action)
+
+
+    public override void AdjustToNextExecutionTime()
     {
-        DateTime now = DateTime.Now;
-
-        // Ensure the task is not executed before the start time
-        if (now < StartTime) return false;
-
-        lock (_executionLock)
-        {
-            if (!Executed.HasValue)
-            {
-                Executed = now; // Mark as executed inside the lock
-            }
-            else
-            {
-                return true; // Avoid race conditions for double execution
-            }
-        }
-
-        // Execute the action asynchronously outside the lock
-        await Task.Run(() =>
-        {
-            action?.Invoke(TaskChain);
-        });
-
-        return true;
+        throw new NotImplementedException("a one time event cannot be rescheduled.");
     }
-
 }

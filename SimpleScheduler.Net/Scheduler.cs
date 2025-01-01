@@ -1,6 +1,7 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OllamaClientLibrary.GeneralAi.PromptChain;
 using SimpleScheduler.Net.EventTypes;
 using SimpleScheduler.Net.util.json;
 
@@ -11,48 +12,57 @@ namespace SimpleScheduler.Net;
 /// </summary>
 public class Scheduler
 {
-    [JsonIgnore]
-    public string? SavePath { get; set; }
+    [JsonIgnore] public string? SavePath { get; set; }
 
     public bool AutoSave { get; set; } = true;
+
     /// <summary>
     /// holds all one time events. Managed automatically
     /// </summary>
     /// <remarks>please use AddEventAsync to add events to the scheduler to avoid race conditions</remarks>
     public SortedList<DateTime, OneTimeEvent> OneTimeEvents { get; set; } = new SortedList<DateTime, OneTimeEvent>();
+
     private SemaphoreSlim _OneTimeSemaphore = new SemaphoreSlim(1);
+
     /// <summary>
     /// holds all simple repeating events. Managed automatically
     /// </summary>
     /// <remarks>please use AddEventAsync to add events to the scheduler to avoid race conditions</remarks>
     public SortedList<DateTime, RepeatingEvent> CronJobs { get; set; } = new SortedList<DateTime, RepeatingEvent>();
-    private SemaphoreSlim _CronSemaphore = new SemaphoreSlim(1);/// <summary>
+
+    private SemaphoreSlim _CronSemaphore = new SemaphoreSlim(1);
+
+    /// <summary>
     /// holds all weekly scheduled events. Managed automatically
     /// </summary>
     /// <remarks>please use AddEventAsync to add events to the scheduler to avoid race conditions</remarks>
     public SortedList<DateTime, WeeklyEvent> WeeklySchedule { get; set; } = new SortedList<DateTime, WeeklyEvent>();
+
     private SemaphoreSlim _WeeklySemaphore = new SemaphoreSlim(1);
 
-    private Action<string> Processor { get; set; }
+    private Func<string, Task> Processor { get; set; }
+
     /// <summary>
     /// runs the scheduler infinitely, processing all tasks
     /// </summary>
     /// <param name="processor">function which takes a string parameter (presumably json) to process</param>
-    public async Task Run(Action<string> processor)
+    public async Task Run(Func<object, Task> processor)
     {
         List<Task> tasks = new List<Task>();
-        Processor = processor;
+
         while (true)
         {
             tasks.Clear();
-            tasks.Add(ProcessEvents(OneTimeEvents, _OneTimeSemaphore));
-            tasks.Add(ProcessEvents(CronJobs,_CronSemaphore, isRepeating: true));
-            tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore ,isRepeating: true));
+            tasks.Add(ProcessEvents(OneTimeEvents, _OneTimeSemaphore, processor));
+            tasks.Add(ProcessEvents(CronJobs, _CronSemaphore, processor, isRepeating: true));
+            tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore, processor, isRepeating: true));
             await Task.WhenAll(tasks);
             if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
             await Task.Delay(1000);
         }
     }
+
+
     /// <summary>
     /// adds an event to the OneTimeEvents list in thread safe manner
     /// </summary>
@@ -107,7 +117,12 @@ public class Scheduler
         }
     }
 
-    private async Task ProcessEvents<T>(SortedList<DateTime, T> events, SemaphoreSlim semaphore, bool isRepeating = false) where T : EventBase
+    private async Task ProcessEvents<T>(
+        SortedList<DateTime, T> events,
+        SemaphoreSlim semaphore,
+        Func<object, Task> processor,
+        bool isRepeating = false
+    ) where T : EventBase
     {
         await semaphore.WaitAsync();
         try
@@ -115,20 +130,44 @@ public class Scheduler
             if (events.Any())
             {
                 var firstEvent = events.Values.First();
-                bool remove = false;
+                (bool remove, bool execute) taskStartInfo = firstEvent.EvaluateSchedule();
+                
                 try
                 {
-                    remove = await firstEvent.ExecuteEvaluate(Processor); // Ensure async task completion
+                    if (taskStartInfo.execute)
+                    {
+                        // Process the event dynamically
+                        if (firstEvent.TaskChain is not null)
+                        {
+                            // Execute using TaskChain
+                            await processor(firstEvent.TaskChain);
+                        }
+                        else if (!string.IsNullOrEmpty(firstEvent.TaskData))
+                        {
+                            // Execute using TaskData
+                            await processor(firstEvent.TaskData);
+                        }
+                        else
+                        {
+                            Debug.WriteLine($"Event does not have valid TaskData or TaskChain: {firstEvent.GetType()}");
+                            throw new InvalidOperationException($"Event does not have valid TaskData or TaskChain: {firstEvent.GetType()}");
+                        }
+                    }
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine($"failed to execute event {firstEvent.ToString()}");
-                    Debug.WriteLine($"failed to execute event {firstEvent.ToString()}");
+                    Debug.WriteLine($"Failed to execute event: {e}");
                 }
-                finally
+
+                // Remove completed tasks
+                if (taskStartInfo.remove)
                 {
                     events.RemoveAt(0);
-                    if (!remove && isRepeating) events.Add(firstEvent.StartTime, firstEvent);
+                }
+                else if (isRepeating)
+                {
+                    firstEvent.AdjustToNextExecutionTime();
+                    events.Add(firstEvent.StartTime, firstEvent);
                 }
             }
         }
@@ -190,6 +229,7 @@ public class Scheduler
 
         return events.OrderBy(e => e.StartTime).ToList();
     }
+
     /// <summary>
     /// Saves the current state of the scheduler to a file using atomic saving.
     /// </summary>
@@ -232,55 +272,58 @@ public class Scheduler
     /// </summary>
     /// <param name="filePath">The file path from where the scheduler data should be loaded.</param>
     public async Task LoadAsync(string? filePath = null, bool throwOnNotExist = true)
-{
-    if (!string.IsNullOrEmpty(filePath))
-        SavePath = filePath;
-    if (string.IsNullOrEmpty(SavePath))
-        throw new ArgumentException("You need to define the SavePath first!");
-    if (!SavePath.EndsWith(".schedule"))
-        SavePath += ".schedule";
-    if (throwOnNotExist && !File.Exists(SavePath))
-        throw new FileNotFoundException("Scheduler state file not found.", SavePath);
-    if (!File.Exists(SavePath))
     {
-        return;
-    }
-
-    var options = new JsonSerializerOptions
-    {
-        Converters = { new JsonStringEnumConverter() }
-    };
-
-    using (var fileStream = new FileStream(SavePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-    {
-        if (fileStream is null || fileStream.Length == 0) return;
-
-        try
+        if (!string.IsNullOrEmpty(filePath))
+            SavePath = filePath;
+        if (string.IsNullOrEmpty(SavePath))
+            throw new ArgumentException("You need to define the SavePath first!");
+        if (!SavePath.EndsWith(".schedule"))
+            SavePath += ".schedule";
+        if (throwOnNotExist && !File.Exists(SavePath))
+            throw new FileNotFoundException("Scheduler state file not found.", SavePath);
+        if (!File.Exists(SavePath))
         {
-            var state = await JsonSerializer.DeserializeAsync<JsonElement>(fileStream, options);
-            if (state.ValueKind == JsonValueKind.Object)
+            return;
+        }
+
+        var options = new JsonSerializerOptions
+        {
+            Converters = { new JsonStringEnumConverter() }
+        };
+
+        using (var fileStream = new FileStream(SavePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            if (fileStream is null || fileStream.Length == 0) return;
+
+            try
             {
-                this.OneTimeEvents = state.TryGetProperty("OneTimeEvents", out var oneTimeEvents) &&
-                                     oneTimeEvents.ValueKind != JsonValueKind.Null
-                    ? JsonSerializer.Deserialize<SortedList<DateTime, OneTimeEvent>>(oneTimeEvents.GetRawText(), options)
-                    : new SortedList<DateTime, OneTimeEvent>();
+                var state = await JsonSerializer.DeserializeAsync<JsonElement>(fileStream, options);
+                if (state.ValueKind == JsonValueKind.Object)
+                {
+                    this.OneTimeEvents = state.TryGetProperty("OneTimeEvents", out var oneTimeEvents) &&
+                                         oneTimeEvents.ValueKind != JsonValueKind.Null
+                        ? JsonSerializer.Deserialize<SortedList<DateTime, OneTimeEvent>>(oneTimeEvents.GetRawText(),
+                            options)
+                        : new SortedList<DateTime, OneTimeEvent>();
 
-                this.CronJobs = state.TryGetProperty("CronJobs", out var cronJobs) &&
-                                cronJobs.ValueKind != JsonValueKind.Null
-                    ? JsonSerializer.Deserialize<SortedList<DateTime, RepeatingEvent>>(cronJobs.GetRawText(), options)
-                    : new SortedList<DateTime, RepeatingEvent>();
+                    this.CronJobs = state.TryGetProperty("CronJobs", out var cronJobs) &&
+                                    cronJobs.ValueKind != JsonValueKind.Null
+                        ? JsonSerializer.Deserialize<SortedList<DateTime, RepeatingEvent>>(cronJobs.GetRawText(),
+                            options)
+                        : new SortedList<DateTime, RepeatingEvent>();
 
-                this.WeeklySchedule = state.TryGetProperty("WeeklySchedule", out var weeklySchedule) &&
-                                      weeklySchedule.ValueKind != JsonValueKind.Null
-                    ? JsonSerializer.Deserialize<SortedList<DateTime, WeeklyEvent>>(weeklySchedule.GetRawText(), options)
-                    : new SortedList<DateTime, WeeklyEvent>();
+                    this.WeeklySchedule = state.TryGetProperty("WeeklySchedule", out var weeklySchedule) &&
+                                          weeklySchedule.ValueKind != JsonValueKind.Null
+                        ? JsonSerializer.Deserialize<SortedList<DateTime, WeeklyEvent>>(weeklySchedule.GetRawText(),
+                            options)
+                        : new SortedList<DateTime, WeeklyEvent>();
+                }
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException("Failed to deserialize scheduler state.", ex);
             }
         }
-        catch (JsonException ex)
-        {
-            throw new InvalidOperationException("Failed to deserialize scheduler state.", ex);
-        }
     }
-}
 
 }

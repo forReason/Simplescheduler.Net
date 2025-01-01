@@ -4,6 +4,13 @@ namespace SimpleScheduler.Net.EventTypes;
 
 public class WeeklyEvent : EventBase
 {
+    /// <summary>
+    /// for json serialization only
+    /// </summary>
+    public WeeklyEvent()
+    {
+        /* for json serialization*/
+    }
     public WeeklyEvent(DateTime startTime, string taskData, HashSet<DayOfWeek> interval,string? title = null ,DateTime? endTime = null, DateTime? executed = null)
     {
         if (!interval.Any()) throw new ArgumentException("Days cannot be empty!");
@@ -31,62 +38,39 @@ public class WeeklyEvent : EventBase
     public HashSet<DayOfWeek> Interval { get; set; }
 
     /// <summary>
-    /// checks if the task should be executed. <br/>
-    /// Executes the task if applicable. <br/>
+    /// Evaluates if the task is ready for execution or should be rescheduled.
     /// </summary>
-    /// <returns>Returns true, if the task is complete and can be removed</returns>
-    /// <summary>
-    /// Checks if the task should be executed.
-    /// Executes the task if applicable.
-    /// </summary>
-    /// <returns>Returns true if the task is complete and can be removed.</returns>
-    public override async Task<bool> ExecuteEvaluate(Action<string> action)
+    /// <returns>(bool remove, bool execute)</returns>
+    public override (bool remove, bool execute) EvaluateSchedule()
     {
         DateTime now = DateTime.Now;
-        if (EndTime.HasValue && now > EndTime) return true;
-        if (now < StartTime) return false;
 
+        // Check if the event has expired
+        if (EndTime.HasValue && now > EndTime) return (true, false);
+
+        // Check if the event is not yet ready to execute
+        if (now < StartTime) return (false, false);
+
+        // Check if the event missed its maximum start delay
+        if (now > StartTime + MaxStartDelay) return (true, false);
+
+        // Lock to ensure thread safety
         lock (_executionLock)
         {
-            if (Executed.HasValue && Executed.Value >= StartTime) return false;
+            // Check if the task has already been executed
+            if (Executed.HasValue && Executed.Value >= StartTime) 
+                return (true, false);
 
-            // Execute the task
-            Task.Run(() => action?.Invoke(TaskData));
+            // Mark the task as executed
             Executed = now;
-
-            // Adjust StartTime to the next execution time
-            AdjustToNextExecution();
         }
 
-        return false;
-    }
-    /// <summary>
-    /// executes a prompt chain injection
-    /// </summary>
-    /// <param name="action"></param>
-    /// <returns></returns>
-    public override async Task<bool> ExecuteEvaluatePromptChain(Action<PromptChain> action)
-    {
-        DateTime now = DateTime.Now;
-        if (EndTime.HasValue && now > EndTime) return true;
-        if (now < StartTime) return false;
-
-        lock (_executionLock)
-        {
-            if (Executed.HasValue && Executed.Value >= StartTime) return false;
-
-            // Execute the task
-            Task.Run(() => action?.Invoke(TaskChain));
-            Executed = now;
-
-            // Adjust StartTime to the next execution time
-            AdjustToNextExecution();
-        }
-
-        return false;
+        // start task and reschedule!
+        return (true, true);
     }
 
-    private void AdjustToNextExecution()
+
+    public override void AdjustToNextExecutionTime()
     {
         DateTime now = DateTime.Now;
         DateTime nextStart = StartTime;

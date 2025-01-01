@@ -14,6 +14,11 @@ public abstract class EventBase
     public DateTime? EndTime { get; set; } = null;
 
     /// <summary>
+    /// blocks the task from executing after this time
+    /// </summary>
+    public TimeSpan MaxStartDelay { get; set; } = TimeSpan.FromHours(7);
+
+    /// <summary>
     /// the action to invoke
     /// </summary>
     public string? TaskData { get; set; } = null;
@@ -33,8 +38,12 @@ public abstract class EventBase
     /// </summary>
     public string? Title { get; set; } = null;
     internal readonly object _executionLock = new();
-    public abstract Task<bool> ExecuteEvaluate(Action<string> action);
-    public abstract Task<bool> ExecuteEvaluatePromptChain(Action<PromptChain> action);
+    /// <summary>
+    /// Evaluates if the task is ready for execution or should be rescheduled.
+    /// </summary>
+    /// <returns>(bool remove, bool execute)</returns>
+    public abstract (bool remove, bool execute) EvaluateSchedule();
+    public abstract void AdjustToNextExecutionTime();
     public override string ToString()
     {
         return $"{StartTime.ToString("yy-MMM-dd yyyy HH:mm:ss")} - {Title ?? "Unnamed"}";
