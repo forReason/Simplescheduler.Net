@@ -51,6 +51,7 @@ public class WeeklyEvent : EventBase
         // Check if the event is not yet ready to execute
         if (now < StartTime) return (false, false);
 
+        if (!Interval.Contains(now.DayOfWeek)) return (true, false);
         // Check if the event missed its maximum start delay
         if (now > StartTime + MaxStartDelay) return (true, false);
 

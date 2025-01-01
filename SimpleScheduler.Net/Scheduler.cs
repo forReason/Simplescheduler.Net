@@ -46,19 +46,40 @@ public class Scheduler
     /// runs the scheduler infinitely, processing all tasks
     /// </summary>
     /// <param name="processor">function which takes a string parameter (presumably json) to process</param>
-    public async Task Run(Func<object, Task> processor)
+    public async Task RunAsync(Func<object, Task> processor)
     {
-        List<Task> tasks = new List<Task>();
+        List<Task<bool>> tasks = new List<Task<bool>>();
 
         while (true)
         {
-            tasks.Clear();
-            tasks.Add(ProcessEvents(OneTimeEvents, _OneTimeSemaphore, processor));
-            tasks.Add(ProcessEvents(CronJobs, _CronSemaphore, processor, isRepeating: true));
-            tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore, processor, isRepeating: true));
-            await Task.WhenAll(tasks);
-            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
-            await Task.Delay(1000);
+            try
+            {
+                tasks.Clear();
+                // TODO: only save when nessecary
+                tasks.Add(ProcessEvents(OneTimeEvents, _OneTimeSemaphore, processor));
+                tasks.Add(ProcessEvents(CronJobs, _CronSemaphore, processor, isRepeating: true));
+                tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore, processor, isRepeating: true));
+                await Task.WhenAll(tasks);
+                bool changes = false;
+                foreach (Task<bool> process in tasks)
+                {
+                    if (process.Result)
+                    {
+                        changes = true;
+                        break;
+                    }
+                }
+                if (AutoSave && changes &&  !string.IsNullOrEmpty(SavePath))
+                { 
+                    Save();
+                }
+                await Task.Delay(1000);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine(ex.Message);
+                Debugger.Break();
+            }
         }
     }
 
@@ -73,7 +94,7 @@ public class Scheduler
         try
         {
             OneTimeEvents.Add(newEvent.StartTime, newEvent);
-            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) Save();
         }
         finally
         {
@@ -91,7 +112,7 @@ public class Scheduler
         try
         {
             CronJobs.Add(newEvent.StartTime, newEvent);
-            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) Save();
         }
         finally
         {
@@ -109,7 +130,7 @@ public class Scheduler
         try
         {
             WeeklySchedule.Add(newEvent.StartTime, newEvent);
-            if (AutoSave && !string.IsNullOrEmpty(SavePath)) await SaveAsync();
+            if (AutoSave && !string.IsNullOrEmpty(SavePath)) Save();
         }
         finally
         {
@@ -117,7 +138,7 @@ public class Scheduler
         }
     }
 
-    private async Task ProcessEvents<T>(
+    private async Task<bool> ProcessEvents<T>(
         SortedList<DateTime, T> events,
         SemaphoreSlim semaphore,
         Func<object, Task> processor,
@@ -125,6 +146,7 @@ public class Scheduler
     ) where T : EventBase
     {
         await semaphore.WaitAsync();
+        bool schedulerChanged = false;
         try
         {
             if (events.Any())
@@ -136,6 +158,7 @@ public class Scheduler
                 {
                     if (taskStartInfo.execute)
                     {
+                        schedulerChanged = true;
                         // Process the event dynamically
                         if (firstEvent.TaskChain is not null)
                         {
@@ -162,12 +185,13 @@ public class Scheduler
                 // Remove completed tasks
                 if (taskStartInfo.remove)
                 {
+                    schedulerChanged = true;
                     events.RemoveAt(0);
-                }
-                else if (isRepeating)
-                {
-                    firstEvent.AdjustToNextExecutionTime();
-                    events.Add(firstEvent.StartTime, firstEvent);
+                    if (isRepeating)
+                    {
+                        firstEvent.AdjustToNextExecutionTime();
+                        events.Add(firstEvent.StartTime, firstEvent);
+                    }
                 }
             }
         }
@@ -175,6 +199,7 @@ public class Scheduler
         {
             semaphore.Release();
         }
+        return schedulerChanged;
     }
 
     /// <summary>
@@ -234,22 +259,29 @@ public class Scheduler
     /// Saves the current state of the scheduler to a file using atomic saving.
     /// </summary>
     /// <param name="savePath">The file path where the scheduler data should be saved.</param>
-    public async Task SaveAsync(string? savePath = null)
+    public void Save(string? savePath = null)
     {
+        Debug.WriteLine("Starting SaveAsync");
+        Debug.WriteLine($"SavePath: {SavePath}");
+        
+
         if (!string.IsNullOrEmpty(savePath))
             SavePath = savePath;
+
         if (string.IsNullOrEmpty(SavePath))
-            throw new ArgumentException("you need to define the savePath first!");
+            throw new ArgumentException("You need to define the savePath first!");
+
         if (!SavePath.EndsWith(".schedule"))
             SavePath += ".schedule";
 
-        // Ensure the directory exists
         string directoryPath = Path.GetDirectoryName(SavePath)
                                ?? throw new InvalidOperationException("Failed to determine directory path.");
+
         if (!Directory.Exists(directoryPath))
         {
             Directory.CreateDirectory(directoryPath);
         }
+        
 
         var options = new JsonSerializerOptions
         {
@@ -258,13 +290,46 @@ public class Scheduler
         };
 
         string tempFilePath = SavePath + ".tmp";
-
-        using (var fileStream = new FileStream(tempFilePath, FileMode.Create, FileAccess.Write, FileShare.None))
+        Debug.WriteLine($"TempFilePath: {tempFilePath}");
+        
+        try
         {
-            await JsonSerializer.SerializeAsync(fileStream, this, options);
+            if (File.Exists(tempFilePath))
+            {
+                Debug.WriteLine($"deleting temp file: {tempFilePath}");
+                File.Delete(tempFilePath);
+            }
+                
+            Debug.WriteLine($"writing new temp file: {tempFilePath}");
+            string json = JsonSerializer.Serialize(this, options);
+            File.WriteAllText(tempFilePath, json);
+            Debug.WriteLine($"overwriting old file: {tempFilePath} -> {SavePath}");
+            File.Move(tempFilePath, SavePath, true);
+            Debug.WriteLine($"scheduler saving complete");
         }
+        catch (Exception ex)
+        {
+            // Log and handle specific exceptions as needed
+            if (File.Exists(tempFilePath))
+            {
+                try
+                {
+                    File.Delete(tempFilePath);
+                }
+                catch (Exception fileException)
+                {
+                    Debug.WriteLine($"Failed to cleanup failure: {fileException.Message}");
+                    Debug.WriteLine(fileException.StackTrace);
+                }
+            }
 
-        File.Move(tempFilePath, SavePath, true);
+            Console.WriteLine($"An error occurred while saving the file: {tempFilePath}");
+            Debug.WriteLine($"An error occurred while saving the file: {tempFilePath}");
+            Console.WriteLine(ex.Message);
+            Debug.WriteLine(ex.Message);
+            Debug.WriteLine(ex.StackTrace);
+            throw new InvalidOperationException("An error occurred while saving the file.", ex);
+        }
     }
 
     /// <summary>
