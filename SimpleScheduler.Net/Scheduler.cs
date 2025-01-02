@@ -52,10 +52,10 @@ public class Scheduler
 
         while (true)
         {
+            Debug.WriteLine($"checking schedule for: {SavePath}");
             try
             {
                 tasks.Clear();
-                // TODO: only save when nessecary
                 tasks.Add(ProcessEvents(OneTimeEvents, _OneTimeSemaphore, processor));
                 tasks.Add(ProcessEvents(CronJobs, _CronSemaphore, processor, isRepeating: true));
                 tasks.Add(ProcessEvents(WeeklySchedule, _WeeklySemaphore, processor, isRepeating: true));
@@ -72,15 +72,26 @@ public class Scheduler
                 if (AutoSave && changes &&  !string.IsNullOrEmpty(SavePath))
                 { 
                     Save();
+                    Debug.WriteLine("saved scheduler");
                 }
-                await Task.Delay(1000);
+                
+                try
+                {
+                    await Task.Delay(5000).ConfigureAwait(false);
+                }
+                catch (TaskCanceledException)
+                {
+                    Debugger.Break();
+                }
+                {}
             }
             catch (Exception ex)
             {
                 Debug.WriteLine(ex.Message);
-                Debugger.Break();
+                await Task.Delay(1000);
             }
         }
+        Debugger.Break();
     }
 
 
@@ -163,12 +174,12 @@ public class Scheduler
                         if (firstEvent.TaskChain is not null)
                         {
                             // Execute using TaskChain
-                            await processor(firstEvent.TaskChain);
+                            processor(firstEvent.TaskChain);
                         }
                         else if (!string.IsNullOrEmpty(firstEvent.TaskData))
                         {
                             // Execute using TaskData
-                            await processor(firstEvent.TaskData);
+                            processor(firstEvent.TaskData);
                         }
                         else
                         {
@@ -328,7 +339,6 @@ public class Scheduler
             Console.WriteLine(ex.Message);
             Debug.WriteLine(ex.Message);
             Debug.WriteLine(ex.StackTrace);
-            throw new InvalidOperationException("An error occurred while saving the file.", ex);
         }
     }
 
