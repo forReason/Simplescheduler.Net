@@ -52,7 +52,7 @@ public class Scheduler
 
         while (true)
         {
-            Debug.WriteLine($"checking schedule for: {SavePath}");
+            //Debug.WriteLine($"checking schedule for: {SavePath}");
             try
             {
                 tasks.Clear();
@@ -174,12 +174,12 @@ public class Scheduler
                         if (firstEvent.TaskChain is not null)
                         {
                             // Execute using TaskChain
-                            processor(firstEvent.TaskChain);
+                            await processor(firstEvent.TaskChain);
                         }
                         else if (!string.IsNullOrEmpty(firstEvent.TaskData))
                         {
                             // Execute using TaskData
-                            processor(firstEvent.TaskData);
+                            await processor(firstEvent.TaskData);
                         }
                         else
                         {
